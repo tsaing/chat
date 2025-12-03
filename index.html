@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <title>即時通訊範例（Firebase Realtime DB）</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root{--bg:#0f1720;--panel:#0b1220;--accent:#ff8a42;--text:#e6eef8;}
+    body{margin:0;font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", "Microsoft JhengHei", Arial; background:var(--bg); color:var(--text);}
+    .wrap{max-width:980px;margin:28px auto;padding:18px;}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02));border-radius:10px;padding:18px;box-shadow:0 6px 20px rgba(0,0,0,0.6);}
+    h1{margin:0 0 12px 0;color:var(--accent);}
+    /* 登入 */
+    #loginBox{max-width:520px;margin:18px auto;}
+    label{display:block;margin:8px 0 4px 0;font-size:14px;}
+    input[type="password"], input[type="text"], textarea {width:100%;padding:10px;border-radius:6px;border:1px solid #223; background:#09101a; color:var(--text); box-sizing:border-box;}
+    button{margin-top:12px;padding:10px 14px;border-radius:8px;border:0;background:var(--accent);color:#111;font-weight:600;cursor:pointer;}
+    /* 聊天室 */
+    #chatArea{display:none;margin-top:18px;}
+    #msgList{height:400px;overflow:auto;padding:12px;border-radius:8px;background:#09121a;border:1px solid #16202a;}
+    .msg{padding:8px;margin-bottom:8px;border-radius:8px;background:linear-gradient(90deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02));}
+    .meta{font-size:12px;color:#9fb3cf;margin-bottom:6px;}
+    .text{font-size:15px;white-space:pre-wrap;color:var(--text);}
+    #composer{display:flex;gap:8px;margin-top:12px;}
+    #txt{flex:1;height:56px;padding:10px;border-radius:8px;border:1px solid #233;background:#06121a;color:var(--text);}
+    #sendBtn{width:120px;}
+    .small{font-size:13px;color:#9fb3cf;}
+    .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
+    .usernameBox{display:flex;gap:8px;align-items:center;}
+    .pill{background:#071c24;padding:6px 10px;border-radius:20px;border:1px solid #123;color:#aee;}
+    footer{margin-top:14px;font-size:12px;color:#8ea7c5;}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>即時通訊 - 範例 (Firebase)</h1>
+
+      <!-- 登入區 -->
+      <div id="loginBox">
+        <div class="small">請輸入密碼（系統驗證）與您的顯示名稱，密碼為 <strong>230189487</strong></div>
+
+        <label for="pw">密碼</label>
+        <input id="pw" type="password" placeholder="輸入密碼" />
+
+        <label for="nick">顯示名稱</label>
+        <input id="nick" type="text" placeholder="輸入顯示名稱（例如：小明）" />
+
+        <button id="loginBtn">登入</button>
+        <div id="loginMsg" class="small" style="margin-top:8px;color:#f99;"></div>
+      </div>
+
+      <!-- 聊天區 -->
+      <div id="chatArea">
+        <div class="topbar">
+          <div class="usernameBox">
+            <div class="pill" id="meName">你</div>
+            <div class="small" id="sessionInfo"></div>
+          </div>
+          <div class="small">聊天室：<strong>共用空間</strong></div>
+        </div>
+
+        <div id="msgList" aria-live="polite"></div>
+
+        <div id="composer">
+          <textarea id="txt" placeholder="輸入訊息，按 Ctrl+Enter 或點送出發送"></textarea>
+          <div style="display:flex;flex-direction:column;">
+            <button id="sendBtn">送出</button>
+            <button id="clearBtn" style="margin-top:8px;background:#334; color:#dfe;">清除視窗</button>
+          </div>
+        </div>
+
+        <footer>提示：訊息最多保留 <strong>30</strong> 條（最新 30 條）。</footer>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+/* =========================
+   Firebase 初始化（你提供的）
+   ========================= */
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+import { getAnalytics } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-analytics.js";
+
+// Realtime Database 的模組
+import {
+  getDatabase, ref, push, onChildAdded, query, limitToLast, get, remove, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+
+/*
+  你提供的 firebaseConfig，我已放在這裡
+  （請確保該專案已啟用 Realtime Database）
+*/
+const firebaseConfig = {
+  apiKey: "AIzaSyCikm3n5wtQiTMmVMWwyb-AeSfzsy9H1dI",
+  authDomain: "ng-chat-bb271.firebaseapp.com",
+  projectId: "ng-chat-bb271",
+  storageBucket: "ng-chat-bb271.firebasestorage.app",
+  messagingSenderId: "11581831126",
+  appId: "1:11581831126:web:3a0e438390144fb5675677",
+  measurementId: "G-JRQFBLDJT1"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
+const db = getDatabase(app);
+
+/* =========================
+   UI 與應用邏輯
+   ========================= */
+const PASSWORD = "230189487";
+
+const elLoginBox = document.getElementById('loginBox');
+const elPw = document.getElementById('pw');
+const elNick = document.getElementById('nick');
+const elLoginBtn = document.getElementById('loginBtn');
+const elLoginMsg = document.getElementById('loginMsg');
+
+const elChatArea = document.getElementById('chatArea');
+const elMsgList = document.getElementById('msgList');
+const elTxt = document.getElementById('txt');
+const elSendBtn = document.getElementById('sendBtn');
+const elClearBtn = document.getElementById('clearBtn');
+
+const elMeName = document.getElementById('meName');
+const elSessionInfo = document.getElementById('sessionInfo');
+
+let myName = "";
+let sessionId = ""; // 可作為簡單辨識
+const MESSAGES_NODE = 'messages'; // Firebase 資料節點
+
+// 登入處理
+elLoginBtn.addEventListener('click', doLogin);
+elPw.addEventListener('keypress', (e)=>{ if(e.key === 'Enter') doLogin(); });
+elNick.addEventListener('keypress', (e)=>{ if(e.key === 'Enter') doLogin(); });
+
+function doLogin(){
+  elLoginMsg.textContent = "";
+  const pw = elPw.value.trim();
+  const nick = elNick.value.trim() || "訪客";
+  if(pw !== PASSWORD){
+    elLoginMsg.textContent = "密碼錯誤，請再確認。";
+    return;
+  }
+  // 通過驗證
+  myName = nick;
+  sessionId = 's_' + Math.random().toString(36).slice(2,8);
+  elMeName.textContent = myName;
+  elSessionInfo.textContent = `ID: ${sessionId}`;
+  // 顯示聊天室並隱藏登入
+  elLoginBox.style.display = 'none';
+  elChatArea.style.display = 'block';
+  // 開始監聽並載入訊息
+  startChat();
+}
+
+/* =========================
+   聊天功能：監聽 與 發送
+   ========================= */
+let messagesQuery = query(ref(db, MESSAGES_NODE), limitToLast(30));
+
+// 每次登入都先清空畫面並綁定 onChildAdded（只取最後30條，含未來新訊）
+function startChat(){
+  elMsgList.innerHTML = ''; // 清空畫面
+
+  onChildAdded(messagesQuery, (snap) => {
+    const key = snap.key;
+    const data = snap.val();
+    if(!data) return;
+    appendMessageToUI(key, data);
+  });
+
+  // 綁定送出
+  elSendBtn.addEventListener('click', sendMessage);
+  elTxt.addEventListener('keydown', (e) => {
+    // Ctrl+Enter 發送
+    if(e.key === 'Enter' && e.ctrlKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  elClearBtn.addEventListener('click', ()=>{ elMsgList.innerHTML=''; });
+}
+
+// 將訊息加入畫面（簡單樣式）
+function appendMessageToUI(key, data){
+  // 避免重複顯示（若回放了已存在的 key）
+  if(document.getElementById('m_' + key)) return;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'msg';
+  wrap.id = 'm_' + key;
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  const t = data.ts ? new Date(data.ts).toLocaleString() : '';
+  meta.textContent = `${data.name} · ${t}`;
+
+  const text = document.createElement('div');
+  text.className = 'text';
+  text.textContent = data.text || '';
+
+  wrap.appendChild(meta);
+  wrap.appendChild(text);
+
+  elMsgList.appendChild(wrap);
+  // 自動滾到底部
+  elMsgList.scrollTop = elMsgList.scrollHeight;
+}
+
+// 發送訊息
+async function sendMessage(){
+  const txt = elTxt.value.trim();
+  if(!txt) return;
+  elSendBtn.disabled = true;
+
+  try {
+    // push 一筆新訊息（含 name, text, ts）
+    const nodeRef = ref(db, MESSAGES_NODE);
+    await push(nodeRef, {
+      name: myName,
+      text: txt,
+      ts: Date.now()
+    });
+
+    // 發送後清空輸入
+    elTxt.value = "";
+    elTxt.focus();
+
+    // 修剪：保持最多 30 條（client-side 簡單實作）
+    await trimMessagesToLimit(30);
+  } catch(err){
+    console.error("發送失敗", err);
+    alert('發送失敗，請檢查網路或 DB 設定');
+  } finally {
+    elSendBtn.disabled = false;
+  }
+}
+
+// 修剪訊息節點到最多 limit 條：取得所有訊息，按 ts 排序，刪除最舊的
+async function trimMessagesToLimit(limit){
+  try {
+    const snap = await get(ref(db, MESSAGES_NODE));
+    if(!snap.exists()) return;
+    const obj = snap.val();
+    const arr = Object.keys(obj).map(k => ({ key:k, ...obj[k] }));
+    // 按 ts 排序（舊到新）
+    arr.sort((a,b)=> (a.ts||0) - (b.ts||0));
+    if(arr.length <= limit) return;
+    const toRemove = arr.slice(0, arr.length - limit);
+    // 逐一刪除最舊的
+    const promises = toRemove.map(item => remove(ref(db, `${MESSAGES_NODE}/${item.key}`)));
+    await Promise.all(promises);
+  } catch(err){
+    console.error("修剪訊息錯誤：", err);
+  }
+}
+  </script>
+</body>
+</html>
